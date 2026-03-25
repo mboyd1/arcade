@@ -196,6 +196,9 @@ func setupServer(arcadeRoutes *fiberRoutes.Routes, chaintracksRts *chaintracksRo
 	// Transaction endpoints (ARC-compatible)
 	arcadeRoutes.Register(app)
 
+	// Legacy ARC v1 prefix (/v1/tx → same handlers as /tx)
+	arcadeRoutes.Register(app.Group("/v1"))
+
 	// Chaintracks endpoints (block header tracking)
 	if chaintracksRts != nil {
 		chaintracksGroup := app.Group("/chaintracks")

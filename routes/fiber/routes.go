@@ -295,11 +295,13 @@ func (r *Routes) HandleGetHealth(c *fiber.Ctx) error {
 
 // parseTransactionBody extracts raw transaction bytes from the request body.
 func (r *Routes) parseTransactionBody(c *fiber.Ctx) ([]byte, error) {
-	switch c.Get("Content-Type") {
-	case "application/octet-stream":
+	contentType := c.Get("Content-Type")
+
+	switch {
+	case strings.HasPrefix(contentType, "application/octet-stream"):
 		return c.Body(), nil
-	case "text/plain":
-		data, err := hex.DecodeString(string(c.Body()))
+	case strings.HasPrefix(contentType, "text/plain"):
+		data, err := hex.DecodeString(strings.TrimSpace(string(c.Body())))
 		if err != nil {
 			return nil, errInvalidTransactionHex
 		}

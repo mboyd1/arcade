@@ -205,6 +205,10 @@ func setupServer(arcadeRoutes *fiberRoutes.Routes, chaintracksRts *chaintracksRo
 		chaintracksRts.Register(chaintracksGroup.Group("/v2"))
 		chaintracksRts.RegisterLegacy(chaintracksGroup.Group("/v1"))
 
+		// Legacy: serve chaintracks routes at root for clients requesting /header/...
+		chaintracksRts.Register(app)
+		chaintracksRts.RegisterLegacy(app)
+
 		// CDN static file serving for bulk header downloads
 		// Serves files like mainNetBlockHeaders.json and mainNet_X.headers
 		chaintracksGroup.Static("/", chaintracksStoragePath, fiber.Static{

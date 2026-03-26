@@ -12,9 +12,10 @@ import (
 type Metrics struct {
 	startTime time.Time
 
-	totalRequests atomic.Int64
-	statusCounts  sync.Map // status code (int) -> *atomic.Int64
-	routeCounts   sync.Map // "METHOD /path" (string) -> *routeMetrics
+	totalRequests   atomic.Int64
+	unmatchedCount  atomic.Int64
+	statusCounts    sync.Map // status code (int) -> *atomic.Int64
+	routeCounts     sync.Map // "METHOD /pattern" (string) -> *routeMetrics
 }
 
 type routeMetrics struct {
@@ -24,11 +25,12 @@ type routeMetrics struct {
 
 // MetricsSnapshot is the JSON-serializable stats output.
 type MetricsSnapshot struct {
-	Uptime        string                       `json:"uptime"`
-	UptimeSeconds float64                      `json:"uptimeSeconds"`
-	TotalRequests int64                        `json:"totalRequests"`
-	StatusCodes   map[int]int64                `json:"statusCodes"`
-	Routes        map[string]RouteSnapshot     `json:"routes"`
+	Uptime        string                   `json:"uptime"`
+	UptimeSeconds float64                  `json:"uptimeSeconds"`
+	TotalRequests int64                    `json:"totalRequests"`
+	Unmatched     int64                    `json:"unmatched"`
+	StatusCodes   map[int]int64            `json:"statusCodes"`
+	Routes        map[string]RouteSnapshot `json:"routes"`
 }
 
 // RouteSnapshot is per-route stats.
@@ -50,9 +52,17 @@ func (m *Metrics) Middleware() fiber.Handler {
 		err := c.Next()
 
 		status := c.Response().StatusCode()
-		route := c.Method() + " " + c.Path()
-
 		m.totalRequests.Add(1)
+
+		// Use the matched route pattern (e.g. "/tx/:txid") not the raw path.
+		// Unmatched routes have an empty pattern — count them separately.
+		pattern := c.Route().Path
+		if pattern == "" {
+			m.unmatchedCount.Add(1)
+			return err
+		}
+
+		route := c.Method() + " " + pattern
 
 		// Global status count
 		m.incrementStatus(&m.statusCounts, status)
@@ -80,6 +90,7 @@ func (m *Metrics) Snapshot() MetricsSnapshot {
 		Uptime:        uptime.Round(time.Second).String(),
 		UptimeSeconds: uptime.Seconds(),
 		TotalRequests: m.totalRequests.Load(),
+		Unmatched:     m.unmatchedCount.Load(),
 		StatusCodes:   make(map[int]int64),
 		Routes:        make(map[string]RouteSnapshot),
 	}

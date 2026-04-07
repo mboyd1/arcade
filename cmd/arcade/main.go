@@ -109,6 +109,9 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	// Setup dashboard
 	dashboard := NewDashboard(services.Arcade)
 
+	// Setup metrics
+	metrics := NewMetrics()
+
 	// Setup and start HTTP server
 	log.Info("Starting HTTP server", slog.String("address", cfg.Server.Address))
 	authToken := ""
@@ -116,7 +119,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		authToken = cfg.Auth.Token
 		log.Info("API authentication enabled")
 	}
-	app := setupServer(arcadeRoutes, chaintracksRts, dashboard, authToken, cfg.Chaintracks.StoragePath)
+	app := setupServer(arcadeRoutes, chaintracksRts, dashboard, metrics, authToken, cfg.Chaintracks.StoragePath)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -125,12 +128,22 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		}
 	}()
 
+	// Start admin server on localhost only
+	adminApp := setupAdminServer(metrics)
+	go func() {
+		adminAddr := "127.0.0.1:3012"
+		log.Info("Starting admin server", slog.String("address", adminAddr))
+		if err := adminApp.Listen(adminAddr); err != nil {
+			log.Error("Admin server error", slog.String("error", err.Error()))
+		}
+	}()
+
 	log.Info("Arcade started successfully")
 
-	return waitForShutdown(ctx, cfg, log, app, errCh)
+	return waitForShutdown(ctx, cfg, log, app, adminApp, errCh)
 }
 
-func waitForShutdown(ctx context.Context, cfg *config.Config, log *slog.Logger, app *fiber.App, errCh <-chan error) error {
+func waitForShutdown(ctx context.Context, cfg *config.Config, log *slog.Logger, app, adminApp *fiber.App, errCh <-chan error) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
@@ -149,6 +162,9 @@ func waitForShutdown(ctx context.Context, cfg *config.Config, log *slog.Logger, 
 	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, cfg.Server.ShutdownTimeout)
 	defer shutdownCancel()
 
+	if err := adminApp.ShutdownWithContext(shutdownCtx); err != nil {
+		log.Error("Error during admin server shutdown", slog.String("error", err.Error()))
+	}
 	if err := app.ShutdownWithContext(shutdownCtx); err != nil {
 		log.Error("Error during server shutdown", slog.String("error", err.Error()))
 	}
@@ -157,7 +173,7 @@ func waitForShutdown(ctx context.Context, cfg *config.Config, log *slog.Logger, 
 	return nil
 }
 
-func setupServer(arcadeRoutes *fiberRoutes.Routes, chaintracksRts *chaintracksRoutes.Routes, dashboard *Dashboard, authToken, chaintracksStoragePath string) *fiber.App {
+func setupServer(arcadeRoutes *fiberRoutes.Routes, chaintracksRts *chaintracksRoutes.Routes, dashboard *Dashboard, metrics *Metrics, authToken, chaintracksStoragePath string) *fiber.App {
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
@@ -165,6 +181,7 @@ func setupServer(arcadeRoutes *fiberRoutes.Routes, chaintracksRts *chaintracksRo
 	app.Use(fiberlogger.New(fiberlogger.Config{
 		Format: "${method} ${path} - ${status} (${latency})\n",
 	}))
+	app.Use(metrics.Middleware())
 	app.Use(recover.New())
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
@@ -179,11 +196,18 @@ func setupServer(arcadeRoutes *fiberRoutes.Routes, chaintracksRts *chaintracksRo
 	// Transaction endpoints (ARC-compatible)
 	arcadeRoutes.Register(app)
 
+	// Legacy ARC v1 prefix (/v1/tx → same handlers as /tx)
+	arcadeRoutes.Register(app.Group("/v1"))
+
 	// Chaintracks endpoints (block header tracking)
 	if chaintracksRts != nil {
 		chaintracksGroup := app.Group("/chaintracks")
 		chaintracksRts.Register(chaintracksGroup.Group("/v2"))
 		chaintracksRts.RegisterLegacy(chaintracksGroup.Group("/v1"))
+
+		// Legacy: serve chaintracks routes at root for clients requesting /header/...
+		chaintracksRts.Register(app)
+		chaintracksRts.RegisterLegacy(app)
 
 		// CDN static file serving for bulk header downloads
 		// Serves files like mainNetBlockHeaders.json and mainNet_X.headers
@@ -221,6 +245,18 @@ func setupServer(arcadeRoutes *fiberRoutes.Routes, chaintracksRts *chaintracksRo
 	})
 	app.Get("/docs", func(c *fiber.Ctx) error {
 		return c.Type("html").SendString(scalarHTML)
+	})
+
+	return app
+}
+
+func setupAdminServer(metrics *Metrics) *fiber.App {
+	app := fiber.New(fiber.Config{
+		DisableStartupMessage: true,
+	})
+
+	app.Get("/stats", func(c *fiber.Ctx) error {
+		return c.JSON(metrics.Snapshot())
 	})
 
 	return app

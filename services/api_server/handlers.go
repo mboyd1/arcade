@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"html/template"
 	"io"
 	"net/http"
@@ -317,7 +318,13 @@ func (s *Server) handleBlockProcessed(c *gin.Context, msg models.CallbackMessage
 		c.JSON(http.StatusBadRequest, gin.H{"error": "blockHash is required"})
 		return
 	}
-	if err := s.producer.Send(c.Request.Context(), kafka.TopicBlockProcessed, msg.BlockHash, msg); err != nil {
+	pubCtx, cancel := s.publishCtx(c.Request.Context())
+	defer cancel()
+	if err := s.producer.Send(pubCtx, kafka.TopicBlockProcessed, msg.BlockHash, msg); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "broker queue full, retry later"})
+			return
+		}
 		logger.Error("failed to publish block_processed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to enqueue"})
 		return
@@ -441,7 +448,13 @@ func (s *Server) handleSubmitTransaction(c *gin.Context) {
 		"action": "submit",
 		"raw_tx": rawTx,
 	}
-	if err := s.producer.Send(c.Request.Context(), kafka.TopicTransaction, txid, msg); err != nil {
+	pubCtx, cancel := s.publishCtx(c.Request.Context())
+	defer cancel()
+	if err := s.producer.Send(pubCtx, kafka.TopicTransaction, txid, msg); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "broker queue full, retry later"})
+			return
+		}
 		s.logger.Error("failed to publish transaction", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to submit"})
 		return
@@ -518,7 +531,13 @@ func (s *Server) handleSubmitTransactions(c *gin.Context) {
 	}
 
 	// Phase 2: Batch publish all parsed transactions in one call
-	if err := s.producer.SendBatch(c.Request.Context(), kafka.TopicTransaction, msgs); err != nil {
+	pubCtx, cancel := s.publishCtx(c.Request.Context())
+	defer cancel()
+	if err := s.producer.SendBatch(pubCtx, kafka.TopicTransaction, msgs); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "broker queue full, retry later"})
+			return
+		}
 		s.logger.Error("failed to publish transaction batch", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to submit"})
 		return

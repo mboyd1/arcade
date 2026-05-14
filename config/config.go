@@ -140,6 +140,12 @@ type ChaintracksServerConfig struct {
 type API struct {
 	Host string `mapstructure:"host"`
 	Port int    `mapstructure:"port"`
+	// PublishTimeoutMs bounds how long a /tx handler will wait to enqueue a
+	// transaction onto the internal broker before responding 503. Protects
+	// the handler from pinning a connection indefinitely when downstream
+	// (validator → propagation → teranode) falls behind. Zero falls back to
+	// the default (5s).
+	PublishTimeoutMs int `mapstructure:"publish_timeout_ms"`
 }
 
 // Kafka configures the message broker. Backend picks between a real Sarama

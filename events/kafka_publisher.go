@@ -43,18 +43,11 @@ func NewKafkaPublisher(producer *kafka.Producer, logger *zap.Logger) *KafkaPubli
 // Publish serializes status to JSON and sends it on TopicStatusUpdate. Errors
 // are returned to the caller; the call site decides whether to log-and-continue
 // (the default for status mutations) or propagate.
-//
-// The kafka.Producer.Send signature does not take a context — the underlying
-// broker uses an internal background context for at-most-once produce; we
-// honor cancellation by short-circuiting before the call.
 func (p *KafkaPublisher) Publish(ctx context.Context, status *models.TransactionStatus) error {
 	if status == nil {
 		return fmt.Errorf("nil status")
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return p.producer.Send(kafka.TopicStatusUpdate, status.TxID, status) //nolint:contextcheck // kafka.Producer.Send doesn't take a context; ctx already checked above
+	return p.producer.Send(ctx, kafka.TopicStatusUpdate, status.TxID, status)
 }
 
 // Subscribe joins a fresh consumer group on TopicStatusUpdate and returns a

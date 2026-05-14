@@ -57,6 +57,7 @@ type Propagator struct {
 	reaperInterval    time.Duration
 	reaperBatchSize   int
 	teranodeBatchCap  int
+	maxParallelChunks int
 	holderID          string
 	leaseTTL          time.Duration
 }
@@ -97,6 +98,10 @@ func New(cfg *config.Config, logger *zap.Logger, producer *kafka.Producer, publi
 	if teranodeBatchCap <= 0 {
 		teranodeBatchCap = 100
 	}
+	maxParallel := cfg.Propagation.MaxParallelChunks
+	if maxParallel <= 0 {
+		maxParallel = defaultMaxParallelChunks
+	}
 	return &Propagator{
 		cfg:               cfg,
 		logger:            logger.Named("propagation"),
@@ -112,6 +117,7 @@ func New(cfg *config.Config, logger *zap.Logger, producer *kafka.Producer, publi
 		reaperInterval:    reaperInterval,
 		reaperBatchSize:   reaperBatch,
 		teranodeBatchCap:  teranodeBatchCap,
+		maxParallelChunks: maxParallel,
 		holderID:          newHolderID(),
 		leaseTTL:          leaseTTL,
 	}
@@ -335,11 +341,11 @@ func (p *Propagator) processBatch(ctx context.Context, batch []propagationMsg) e
 	return nil
 }
 
-// maxParallelChunks caps how many chunk broadcasts run concurrently. Each
-// chunk already fans out to every healthy endpoint, so the real concurrency is
-// maxParallelChunks × len(endpoints). Keep this modest so a huge flush doesn't
-// open thousands of sockets at once.
-const maxParallelChunks = 4
+// defaultMaxParallelChunks is the fallback when PropagationConfig.MaxParallelChunks
+// is unset. Each chunk fans out to every healthy endpoint, so the real
+// concurrency is maxParallelChunks × len(endpoints); the default stays under
+// the teranode client's MaxConnsPerHost (200) for any plausible endpoint count.
+const defaultMaxParallelChunks = 32
 
 // fallbackParallelism caps concurrent per-tx broadcasts when an all-rejected
 // chunk falls back to per-tx classification. Each single-tx broadcast already
@@ -380,7 +386,7 @@ func (p *Propagator) broadcastInChunks(ctx context.Context, batch []propagationM
 		return results
 	}
 
-	sem := make(chan struct{}, maxParallelChunks)
+	sem := make(chan struct{}, p.maxParallelChunks)
 	var wg sync.WaitGroup
 	for _, c := range chunks {
 		wg.Add(1)

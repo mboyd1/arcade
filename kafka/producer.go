@@ -23,13 +23,15 @@ func NewProducer(broker Broker) *Producer {
 	return &Producer{broker: broker}
 }
 
-// Send JSON-marshals value and publishes synchronously.
-func (p *Producer) Send(topic, key string, value any) error {
+// Send JSON-marshals value and publishes synchronously. Honors ctx — a
+// canceled or deadline-exceeded context returns immediately rather than
+// blocking on a full broker queue.
+func (p *Producer) Send(ctx context.Context, topic, key string, value any) error {
 	data, err := marshalValue(value)
 	if err != nil {
 		return fmt.Errorf("marshaling message: %w", err)
 	}
-	if err := p.broker.Send(context.Background(), topic, key, data); err != nil {
+	if err := p.broker.Send(ctx, topic, key, data); err != nil {
 		metrics.KafkaProduceErrors.WithLabelValues(topic).Inc()
 		return err
 	}
@@ -39,12 +41,12 @@ func (p *Producer) Send(topic, key string, value any) error {
 }
 
 // SendAsync JSON-marshals value and publishes fire-and-forget.
-func (p *Producer) SendAsync(topic, key string, value any) error {
+func (p *Producer) SendAsync(ctx context.Context, topic, key string, value any) error {
 	data, err := marshalValue(value)
 	if err != nil {
 		return fmt.Errorf("marshaling message: %w", err)
 	}
-	if err := p.broker.SendAsync(context.Background(), topic, key, data); err != nil {
+	if err := p.broker.SendAsync(ctx, topic, key, data); err != nil {
 		metrics.KafkaProduceErrors.WithLabelValues(topic).Inc()
 		return err
 	}
@@ -55,8 +57,8 @@ func (p *Producer) SendAsync(topic, key string, value any) error {
 
 // SendBatch publishes multiple values to the same topic. Each KeyValue.Value
 // is JSON-marshaled before the batch is forwarded to the broker.
-func (p *Producer) SendBatch(topic string, msgs []KeyValue) error {
-	if err := p.broker.SendBatch(context.Background(), topic, msgs); err != nil {
+func (p *Producer) SendBatch(ctx context.Context, topic string, msgs []KeyValue) error {
+	if err := p.broker.SendBatch(ctx, topic, msgs); err != nil {
 		metrics.KafkaProduceErrors.WithLabelValues(topic).Inc()
 		return err
 	}
@@ -66,8 +68,8 @@ func (p *Producer) SendBatch(topic string, msgs []KeyValue) error {
 
 // SendRaw publishes pre-marshaled bytes. Used by consumer DLQ routing so we
 // don't double-encode.
-func (p *Producer) SendRaw(topic, key string, value []byte) error {
-	if err := p.broker.Send(context.Background(), topic, key, value); err != nil {
+func (p *Producer) SendRaw(ctx context.Context, topic, key string, value []byte) error {
+	if err := p.broker.Send(ctx, topic, key, value); err != nil {
 		metrics.KafkaProduceErrors.WithLabelValues(topic).Inc()
 		return err
 	}

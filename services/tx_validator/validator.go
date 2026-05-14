@@ -263,7 +263,7 @@ func (v *Validator) flushValidations(ctx context.Context) error {
 
 	// Phase 5: single Kafka publish for the accepted set + any carry.
 	if len(publishMsgs) > 0 {
-		if err := v.producer.SendBatch(kafka.TopicPropagation, publishMsgs); err != nil { //nolint:contextcheck // Producer.SendBatch wraps context internally; a refactor to plumb ctx is out of scope here
+		if err := v.producer.SendBatch(ctx, kafka.TopicPropagation, publishMsgs); err != nil {
 			// Carry these messages to the next flush. Validation, dedup, and
 			// reject persistence are already done in the store; we only need
 			// the Kafka publish to succeed eventually.

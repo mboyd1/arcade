@@ -133,7 +133,7 @@ func (c *ConsumerGroup) processOne(claim Claim, msg *Message) {
 	metrics.KafkaMessagesTotal.WithLabelValues(msg.Topic, "consume").Inc()
 	metrics.KafkaMessageBytes.WithLabelValues(msg.Topic, "consume").Observe(float64(len(msg.Value)))
 	if err := c.processWithRetry(claim.Context(), msg); err != nil {
-		c.sendToDLQ(msg, err)
+		c.sendToDLQ(claim.Context(), msg, err)
 	}
 	claim.MarkMessage(msg)
 }
@@ -177,7 +177,7 @@ func (c *ConsumerGroup) processWithRetry(ctx context.Context, msg *Message) erro
 // sendToDLQ publishes the failed message envelope to <topic>.dlq via the
 // Broker. Routing through Broker (not the sync Sarama producer) keeps DLQ
 // working in standalone mode where there's no Sarama at all.
-func (c *ConsumerGroup) sendToDLQ(msg *Message, processErr error) {
+func (c *ConsumerGroup) sendToDLQ(ctx context.Context, msg *Message, processErr error) {
 	if c.producer == nil {
 		c.logger.Error("no producer configured for DLQ — dropping failed message",
 			zap.String("topic", msg.Topic),
@@ -199,7 +199,7 @@ func (c *ConsumerGroup) sendToDLQ(msg *Message, processErr error) {
 		c.logger.Error("failed to marshal DLQ message", zap.Error(err))
 		return
 	}
-	if err := c.producer.SendRaw(dlqTopic, string(msg.Key), data); err != nil {
+	if err := c.producer.SendRaw(ctx, dlqTopic, string(msg.Key), data); err != nil {
 		c.logger.Error("failed to send to DLQ",
 			zap.String("dlq_topic", dlqTopic),
 			zap.Error(err),

@@ -47,6 +47,9 @@ func NewHealthServer(port int, logger *zap.Logger) *HealthServer {
 		Addr:              fmt.Sprintf(":%d", port),
 		Handler:           mux,
 		ReadHeaderTimeout: 30 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	return hs

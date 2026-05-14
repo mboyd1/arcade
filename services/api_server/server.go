@@ -77,6 +77,12 @@ func (s *Server) Start(ctx context.Context) error {
 		Addr:              addr,
 		Handler:           withCORS(router),
 		ReadHeaderTimeout: 30 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		// WriteTimeout is sized for the long-lived /events SSE stream, which
+		// writes a keepalive frame every 15s; non-SSE handlers finish well
+		// inside this budget.
+		WriteTimeout: 5 * time.Minute,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	s.logger.Info("API server listening", zap.String("addr", addr))

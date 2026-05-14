@@ -272,8 +272,13 @@ type PropagationConfig struct {
 	// Teranode rejects oversized batches with "too many transactions" (400),
 	// which previously cascaded into a 1k+ per-tx fallback storm. Splitting
 	// into chunks keeps the batch endpoint in play even under Kafka backlog.
-	TeranodeMaxBatchSize int                  `mapstructure:"teranode_max_batch_size"`
-	EndpointHealth       EndpointHealthConfig `mapstructure:"endpoint_health"`
+	TeranodeMaxBatchSize int `mapstructure:"teranode_max_batch_size"`
+	// MaxParallelChunks caps how many chunked broadcasts run concurrently.
+	// Each chunk fans out to every healthy endpoint, so effective in-flight
+	// HTTP requests are MaxParallelChunks × len(endpoints). Stay under the
+	// teranode client's MaxConnsPerHost (200). Zero falls back to the default.
+	MaxParallelChunks int                  `mapstructure:"max_parallel_chunks"`
+	EndpointHealth    EndpointHealthConfig `mapstructure:"endpoint_health"`
 }
 
 // EndpointHealthConfig tunes the per-endpoint circuit-breaker in teranode.Client.

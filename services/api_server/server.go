@@ -49,6 +49,19 @@ func New(cfg *config.Config, logger *zap.Logger, producer *kafka.Producer, publi
 
 func (s *Server) Name() string { return "api-server" }
 
+// publishCtx derives a child context with a deadline for kafka publishes from
+// /tx-style handlers. When the broker is back-pressured (consumers can't drain
+// the topic channel fast enough) the publish blocks; without a bound, the
+// handler pins the inbound HTTP connection FD indefinitely. The default 5s
+// keeps the failure mode bounded: handler returns 503, client retries.
+func (s *Server) publishCtx(parent context.Context) (context.Context, context.CancelFunc) {
+	d := time.Duration(s.cfg.APIServer.PublishTimeoutMs) * time.Millisecond
+	if d <= 0 {
+		d = 5 * time.Second
+	}
+	return context.WithTimeout(parent, d)
+}
+
 func (s *Server) Start(ctx context.Context) error {
 	// Bring up chaintracks BEFORE the router is assembled so registerRoutes
 	// can mount its handlers only when a live instance is present.

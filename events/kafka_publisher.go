@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,6 +40,10 @@ type KafkaPublisher struct {
 	producer         *kafka.Producer
 	logger           *zap.Logger
 	subscriberBuffer int
+	// instance is the per-replica suffix mixed into every consumer group ID.
+	// Resolved once at construction time so all Subscribe calls in this
+	// process produce the same group across restarts.
+	instance string
 
 	mu     sync.Mutex
 	closed bool
@@ -57,6 +62,7 @@ func NewKafkaPublisher(producer *kafka.Producer, logger *zap.Logger, subscriberB
 		producer:         producer,
 		logger:           logger.Named("events.kafka"),
 		subscriberBuffer: subscriberBuffer,
+		instance:         resolveInstanceID(),
 	}
 }
 
@@ -135,10 +141,7 @@ func (p *KafkaPublisher) Subscribe(ctx context.Context, caller string) (<-chan *
 		caller = "unknown"
 	}
 
-	groupID, err := uniqueGroupID()
-	if err != nil {
-		return nil, fmt.Errorf("generating group id: %w", err)
-	}
+	groupID := "arcade-events-" + caller + "-" + p.instance
 
 	out := make(chan *models.TransactionStatus, p.subscriberBuffer)
 
@@ -231,13 +234,31 @@ type kafkaSubscription struct {
 	out chan *models.TransactionStatus
 }
 
-// uniqueGroupID returns a per-call group identifier. Used so each Subscribe
-// gets its own consumer group, which in turn guarantees every subscriber
-// sees every message (the broker fans out across distinct groups).
-func uniqueGroupID() (string, error) {
+// resolveInstanceID picks a stable per-replica suffix for consumer group
+// names. Hostname is the common case — it survives restarts of the same
+// pod/host, so a restarted arcade re-attaches to its existing group instead
+// of orphaning the previous one (which would accumulate as an Empty group
+// in Kafka, distorting lag dashboards). If os.Hostname fails or returns an
+// empty string we fall back to a random suffix so callers still get a
+// unique-per-process identifier — at the cost of leaving the old group
+// behind on restart.
+//
+// Trade-off: two Subscribe calls with the same caller in the same process
+// will now share a group (load-balance instead of fan out). Production
+// callers (SSE manager, webhook service) use distinct caller strings, so
+// they remain isolated. Tests that exercise same-caller fan-out must use
+// distinct caller strings to remain meaningful.
+func resolveInstanceID() string {
+	if host, err := os.Hostname(); err == nil && host != "" {
+		return host
+	}
 	var b [12]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
+		// rand.Read is documented as always succeeding, but degrade
+		// gracefully if it ever does fail by returning a fixed string —
+		// the worst outcome is a single deployment-wide shared group, not
+		// a crash.
+		return "fallback"
 	}
-	return "arcade-events-" + hex.EncodeToString(b[:]), nil
+	return hex.EncodeToString(b[:])
 }

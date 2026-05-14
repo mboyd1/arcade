@@ -58,10 +58,13 @@ func TestKafkaPublisherRoundtrip(t *testing.T) {
 	}
 }
 
-// TestKafkaPublisherFanOut verifies that two independent Subscribe calls each
-// see every published message — the property that makes this Publisher safe
-// to use from both the SSE manager and the webhook service in the same
-// process (and from multiple pods).
+// TestKafkaPublisherFanOut verifies that two independent Subscribe calls with
+// distinct callers each see every published message — the property that
+// makes this Publisher safe to use from both the SSE manager and the
+// webhook service in the same process (and from multiple pods). Callers
+// MUST be distinct: two Subscribe calls with the same caller share a
+// consumer group and load-balance the stream, which is exactly what
+// keeps restart-stable groups from accumulating zombies.
 func TestKafkaPublisherFanOut(t *testing.T) {
 	broker := kafka.NewMemoryBroker(64)
 	defer func() { _ = broker.Close() }()
@@ -71,11 +74,11 @@ func TestKafkaPublisherFanOut(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	chA, err := pub.Subscribe(ctx, "test")
+	chA, err := pub.Subscribe(ctx, "test-a")
 	if err != nil {
 		t.Fatalf("subscribe A: %v", err)
 	}
-	chB, err := pub.Subscribe(ctx, "test")
+	chB, err := pub.Subscribe(ctx, "test-b")
 	if err != nil {
 		t.Fatalf("subscribe B: %v", err)
 	}

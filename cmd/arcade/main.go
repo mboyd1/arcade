@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
+	_ "net/http/pprof" // diagnostic profiling, exposed only when ARCADE_PPROF_ADDR is set
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -40,6 +43,19 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	logger := newLogger(cfg.LogLevel)
 	defer func() { _ = logger.Sync() }()
+
+	// Diagnostic pprof endpoint. Off by default; opt in by setting
+	// ARCADE_PPROF_ADDR (e.g. "localhost:6060"). net/http/pprof registers
+	// its handlers on http.DefaultServeMux, which the zero-value Server uses.
+	if addr := os.Getenv("ARCADE_PPROF_ADDR"); addr != "" {
+		go func() {
+			logger.Info("pprof endpoint listening", zap.String("addr", addr))
+			srv := &http.Server{Addr: addr, ReadHeaderTimeout: 5 * time.Second}
+			if err := srv.ListenAndServe(); err != nil {
+				logger.Warn("pprof endpoint stopped", zap.Error(err))
+			}
+		}()
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
